@@ -1,5 +1,8 @@
 #!/bin/bash
 
+DOCKER_PULL_IMAGES=("postgres:9.4.5" "redis:2.8.22")
+COPY_UNIT_FILES=("postgres" "redis")
+
 SERVER_IP="${SERVER_IP:-10.192.168.154}"
 SSH_USER="${SSH_USER:-$(whoami)}"
 KEY_USER="${KEY_USER:-$(whoami)}"
@@ -33,7 +36,7 @@ EOF
 }
  
 function configure_sudo() {
-	echo "Configuring passwordless sudo..."
+	echo "Configuring passwordless necessarysudo..."
 	scp "sudo/sudoers" "${SSH_USER}@${SERVER_IP}:/tmp/sudoers"
 	ssh -t "${SSH_USER}@${SERVER_IP}" bash -c "'
 sudo chmod 440 /tmp/sudoers
@@ -83,6 +86,54 @@ sudo usermod -aG docker "${KEY_USER}"
 	echo "done!"
 }
 
+function docker_pull() {
+	echo "Pulling Docker images..."
+	for image in "${DOCKER_PULL_IMAGES[@]}"
+	do
+		ssh -t "${SSH_USER}@${SERVER_IP}" bash -c "'docker pull ${image}'"
+	done
+}
+
+function git_init() {
+	echo "Initialize git repo and hooks..."
+	scp "git/post-receive/mobydock" "${SSH_USER}@${SERVER_IP}:/tmp/mobydock"
+	ssh -t "${SSH_USER}@${SERVER_IP}" bash -c "'
+sudo apt-get update && sudo apt-get install -y -q git
+sudo rm -rf /var/git/mobydock.git /var/git/mobydock
+sudo mkdir -p /var/git/mobydock.git /var/git/mobydock
+sudo git --git-dir=/var/git/mobydock.git --bare init
+
+sudo mv /tmp/mobydock /var/git/mobydock.git/hooks/post-receive
+sudo chmod +x /var/git/mobydock.git/hooks/post-receive
+sudo chown ${SSH_USER}:${SSH_USER} -R /var/git/mobydock.git /var/git/mobydock
+	'"
+	echo "done!"
+}
+
+function configure_firewall() {
+	echo "Configuring iptables firewall..."
+	scp "iptables/rules-save" "${SSH_USER}@${SERVER_IP}:/tmp/rules-save"
+	ssh -t "${SSH_USER}@${SERVER_IP}" bash -c "'
+sudo mkdir -p /var/lib/iptables
+sudo mv /tmp/rules-save /var/lib/iptables
+sudo chown root:root -R /var/lib/iptables
+	'"
+	echo "done!"
+}
+
+function copy-units() {
+	echo "Copying systemd unit files..."
+	for unit in "${COPY_UNIT_FILES[@]}"
+	do
+		scp "units/${unit}.service" "${SSH_USER}@${SERVER_IP}:/tmp/${unit}.service"	
+		ssh -t "${SSH_USER}@${SERVER_IP}" bash -c "'
+sudo mv /tmp/${unit}.service /etc/systemd/system
+sudo chown ${SSH_USER}:${SSH_USER} /etc/systemd/system/${unit}.service
+	'"
+	done 	
+	echo "done!"
+}
+
 function provision_server() {
 	configure_sudo
 	echo "--------"
@@ -91,11 +142,17 @@ function provision_server() {
 	configure_secure_ssh
 	echo "--------"
 	install_docker
+	echo "--------"
+	docker_pull
+	echo "--------"
+	git_init
+	echo "--------"
+	configure_firewall
 }
 
 function help_menu() {
 cat << EOF
-Usage: ${0} (-h | -S | -u | -k | -s | -d [docker_ver] | -a [docker_ver])
+Usage: ${0} (-h | -S | -u | -k | -s | -d [docker_ver] | -l | -g | -f | -c | -b | -a [docker_ver])
 
 ENVIRONMENT VARIABLES:
 	SERVER_IP	IP address of remote server, ie. staging or production
@@ -114,6 +171,11 @@ OPTIONS:
 	-k|--ssh-key              Add SSH key
 	-s|--ssh                  Configure secure SSH
 	-d|--docker               Install Docker
+	-l|--docker-pull          Pull necessary Docker images
+	-g|--git-init             Install and initialize git
+	-f|--firewall             Configure IPTABLES firewall
+	-c|--copy-units           Copy systemd unit files
+	-b|--enable-base-units    Enable base systemd unit files
 	-a|--all                  Provision everything except preseeding
 
 EXAMPLES:
@@ -128,6 +190,21 @@ EXAMPLES:
 
     Install Docker v${DOCKER_VERSION}:
     	$ deploy -d
+
+    Pull necessary Docker images:
+    	$ deploy -l
+
+    Install and initialize git:
+    	$ deploy -g
+
+    Configure the iptables firewall:
+    	$ deploy -f
+
+    Copy systemd unit files:
+    	$ deploy -c
+
+    Enable base systemd unit files:
+    	$ deploy -b
 
     Configure everything together:
     	$ deploy -a
@@ -157,6 +234,26 @@ case "$1" in
 		;;
 		-d|--docker)
 		install_docker
+		shift
+		;;
+		-l|--docker-pull)
+		docker_pull
+		shift
+		;;
+		-g|--git-init)
+		git_init
+		shift
+		;;
+		-f|--firewall)
+		configure_firewall
+		shift
+		;;
+		-c|--copy-units)
+		copy_units
+		shift
+		;;
+		-b|--enable-base-units)
+		enable_base_units
 		shift
 		;;
 		-a|--all)
