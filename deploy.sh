@@ -121,7 +121,7 @@ sudo chown root:root -R /var/lib/iptables
 	echo "done!"
 }
 
-function copy-units() {
+function copy_units() {
 	echo "Copying systemd unit files..."
 	for unit in "${COPY_UNIT_FILES[@]}"
 	do
@@ -131,6 +131,19 @@ sudo mv /tmp/${unit}.service /etc/systemd/system
 sudo chown ${SSH_USER}:${SSH_USER} /etc/systemd/system/${unit}.service
 	'"
 	done 	
+	echo "done!"
+}
+
+function enable_base_units() {
+	echo "Enabling base systemd unit files..."
+	ssh -t "${SSH_USER}@${SERVER_IP}" bash -c "'
+sudo systemctl restart docker
+sleep 5
+sudo systemctl enable postgres.service
+sudo systemctl start postgres.service
+sudo systemctl enable redis.service
+sudo systemctl start redis.service
+	'"	
 	echo "done!"
 }
 
@@ -148,6 +161,10 @@ function provision_server() {
 	git_init
 	echo "--------"
 	configure_firewall
+	echo "--------"
+	copy_units
+	echo "--------"
+	enable_base_units
 }
 
 function help_menu() {

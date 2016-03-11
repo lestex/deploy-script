@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -e
+
+# this allows us to use the same template
+# for development, staging and production.
+CONFIG_PATH="/etc/nginx/conf.d/default.conf"
+STAGING_IP="10.192.168.154"
+STAGING_HOSTNAME="staging"
+DOMAIN_NAME="productionexample.com"
+
+if [[ $(hostname) != "${STAGING_HOSTNAME}"]]; then
+	sed -i "s/${STAGING_IP}/${DOMAIN_NAME}/g" "${CONFIG_PATH}"
+fi
+
+# execute the CMD from the Dockerfile.
+exec "$@"
